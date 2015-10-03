@@ -2,6 +2,9 @@
 #define FREESKY_INTERNAL_H
 
 #include "freesky.h"
+#include <stdbool.h>
+
+#define SKYWRITER_ADDR 0x42
 
 struct _freesky_device {
     // All the state that a device handle needs to track.

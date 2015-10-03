@@ -15,7 +15,7 @@ struct _freesky_device;
 typedef struct _freesky_device freesky_device;
 // Opaque struct holding device handles and such.
 
-int freesky_open(freesky_device **dev, const char* i2c_device, freesky_gpio_pin reset_pin, freesky_gpio_pin xfer_pin);
+int freesky_open(freesky_device **pdev, const char* i2c_device, freesky_gpio_pin reset_pin, freesky_gpio_pin xfer_pin);
 // Opens a Skywriter device with the specified i2c_device path,
 // reset_pin, and xfer_pin (in terms of board coordinates), and
 // assigns the newly-opened device to *dev.
