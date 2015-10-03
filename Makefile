@@ -11,7 +11,8 @@ CFLAGS += \
 	-Wall \
 	-Wunused-parameter \
 	-Wunknown-pragmas \
-	-Wsign-compare
+	-Wsign-compare \
+	-D_GNU_SOURCE
 
 all: $(TARGETS)
 

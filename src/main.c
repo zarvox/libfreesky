@@ -1,6 +1,7 @@
 #include "freesky.h"
 #include <stdlib.h>
 #include <stdio.h>
+#include <unistd.h>
 
 #define LOG(...) fprintf(stderr, __VA_ARGS__)
 #define DIE(...) do { LOG(__VA_ARGS__); exit(1); } while(0);
@@ -16,7 +17,7 @@ int main(int argc, char** argv) {
 	int test = 42;
 
 	char* devicepath = "/dev/i2c-1";
-	res = freesky_open(&dev, devicepath, 48, 51);
+	res = freesky_open(&dev, devicepath, 4, 5);
 	if (res < 0) {
 		DIE("couldn't open device\n");
 	}
@@ -28,6 +29,13 @@ int main(int argc, char** argv) {
 	LOG("%d\n", *testref);
 	LOG("roundtripped userdata\n");
 	
+	usleep(2000000);
+	while(1) {
+		int res = freesky_process_events(dev);
+		if (res < 0) break;
+		if (res == 0) usleep(1000000);
+	}
+
 	freesky_close(dev);
 	LOG("closed skywriter\n");
 	return 0;

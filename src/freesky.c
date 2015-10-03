@@ -1,22 +1,110 @@
 #include "freesky.h"
 #include "freesky-internal.h"
 
-#include <stdlib.h> // for malloc(), free()
-#include <string.h> // for memset()
+#include <stdio.h> // for fprintf(3)
+#include <stdlib.h> // for malloc(3), free(3)
+#include <string.h> // for memset(3)
 
-// for open()
+// for open(2)
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 
-#include <linux/ioctl.h> // for ioctl()
-#include <errno.h>
+#include <unistd.h> // for write(2), close(2), usleep(3)
+
+#include <linux/ioctl.h> // for ioctl(2)
+#include <errno.h> // for errno(3)
 
 #include <linux/i2c.h>
 #include <linux/i2c-dev.h>
 #include "i2c-helper.h"
 
+#define LOG(...) fprintf(stderr, __VA_ARGS__)
 #define UNUSED(X) (void)(X);
+#define SYSFS_GPIO_DIR "/sys/class/gpio"
+
+// ---- Internal helpers and utilities ----
+
+typedef enum {
+	GPIO_OUT,
+	GPIO_IN
+} gpio_direction;
+
+typedef enum {
+	GPIO_LOW,
+	GPIO_HIGH,
+} gpio_voltage;
+
+static void export_gpio(freesky_gpio_pin pin) {
+	// echo $pin > /sys/class/gpio/export
+	int fd = open(SYSFS_GPIO_DIR "/export", O_WRONLY);
+	char buf[12];
+	memset(buf, 0, 12);
+	int len = snprintf(buf, 11, "%d", pin);
+	write(fd, buf, len);
+	close(fd);
+}
+
+static void unexport_gpio(freesky_gpio_pin pin) {
+	// echo $pin > /sys/class/gpio/unexport
+	int fd = open(SYSFS_GPIO_DIR "/unexport", O_WRONLY);
+	char buf[12];
+	memset(buf, 0, 12);
+	int len = snprintf(buf, 12, "%d", pin);
+	write(fd, buf, len);
+	close(fd);
+}
+
+static void configure_gpio(freesky_gpio_pin pin, gpio_direction direction, gpio_voltage voltage) {
+	char buf[128];
+	int fd;
+
+	snprintf(buf, 128, SYSFS_GPIO_DIR "/gpio%d/direction", pin);
+	fd = open(buf, O_WRONLY);
+	switch(direction) {
+		case GPIO_OUT: write(fd, "out", 3); break;
+		case GPIO_IN: write(fd, "in", 2); break;
+	}
+	close(fd);
+
+	snprintf(buf, 128, SYSFS_GPIO_DIR "/gpio%d/value", pin);
+	fd = open(buf, O_WRONLY);
+	switch(voltage) {
+		case GPIO_LOW: write(fd, "0", 1); break;
+		case GPIO_HIGH: write(fd, "1", 1); break;
+	}
+	close(fd);
+}
+
+static int xfer_ready(freesky_device* dev) {
+	// Returns 1 if a transfer is ready, 0 if not ready, and -errno on error.
+	if (lseek(dev->xfer_fd, 0, SEEK_SET) < 0) {
+		return -errno;
+	}
+	char buf = '0';
+	if (read(dev->xfer_fd, &buf, 1) != 1) {
+		return -errno;
+	}
+	return (buf == '0') ? 1 : 0;
+}
+
+static void do_xfer(freesky_device* dev) {
+	// 1. Assert transfer line low to preserve data buffers.
+	configure_gpio(dev->xfer_pin, GPIO_OUT, GPIO_LOW);
+	// 2. Do block read
+	__u8 buf[32];
+	int32_t len = i2c_smbus_read_block_data(dev->i2c_fd, 0x00, buf);
+	// 3. TODO: decode bytes and call appropriate callback
+	//    for now, log to the screen
+	for (int32_t i = 0 ; i < len ; i++ ) {
+		LOG("%02X ", buf[i]);
+	}
+	LOG("\n");
+	// 4. Float transfer line high.
+	configure_gpio(dev->xfer_pin, GPIO_IN, GPIO_HIGH);
+}
+
+// ---- Public API functions begin here. ----
 
 int freesky_open(freesky_device **pdev, const char* i2c_device, freesky_gpio_pin reset_pin, freesky_gpio_pin xfer_pin) {
 	// Initialize a new struct on the heap.
@@ -24,25 +112,61 @@ int freesky_open(freesky_device **pdev, const char* i2c_device, freesky_gpio_pin
 	freesky_device* dev = *pdev;
 	memset(dev, 0, sizeof(*dev));
 
-	// Set up the pins.
+	// Set up the GPIO pins.
 	dev->reset_pin = reset_pin;
 	dev->xfer_pin = xfer_pin;
+	export_gpio(dev->reset_pin);
+	export_gpio(dev->xfer_pin);
+	configure_gpio(dev->reset_pin, GPIO_OUT, GPIO_HIGH);
+	configure_gpio(dev->xfer_pin, GPIO_IN, GPIO_HIGH);
+
+	char buf[128];
+	snprintf(buf, 128, SYSFS_GPIO_DIR "/gpio%d/value", xfer_pin);
+	dev->xfer_fd = open(buf, O_RDONLY);
+	
+	// Reset the skywriter, by sending a 100msec pulse low on the reset pin
+	configure_gpio(dev->reset_pin, GPIO_OUT, GPIO_LOW);
+	usleep(100000);
+	
+	// Then wait for the skywriter to start up again.  The datasheet claims 200msec for this; we'll
+	// give it 300, just to be generous.
+	configure_gpio(dev->reset_pin, GPIO_OUT, GPIO_HIGH);
+	usleep(300000);
 
 	// Open the i2c device.
 	dev->i2c_fd = open(i2c_device, O_RDWR);
 	if (dev->i2c_fd < 0) {
+		perror("couldn't open device");
 		return -errno;
 	}
 
 	// Set the slave address.
 	if (ioctl(dev->i2c_fd, I2C_SLAVE, SKYWRITER_ADDR) < 0) {
+		perror("couldn't set slave address");
 		return -errno;
 	}
 
+	// Tell the skywriter to start streaming data.
+	__u8 magic_command = 0xa1;
+	__u8 magic_values[4] = { 0b00000000, 0b00011111, 0b00000000, 0b00011111 };
+	if (i2c_smbus_write_i2c_block_data(dev->i2c_fd, magic_command, 4, magic_values) < 0) {
+		perror("couldn't do i2c block write");
+		return -errno;
+	}
 	return 0;
 }
 
 int freesky_close(freesky_device *dev) {
+	if (dev->i2c_fd) {
+		close(dev->i2c_fd);
+		dev->i2c_fd = -1;
+	}
+
+	configure_gpio(dev->reset_pin, GPIO_IN, GPIO_HIGH);
+	configure_gpio(dev->xfer_pin, GPIO_IN, GPIO_HIGH);
+	unexport_gpio(dev->reset_pin);
+	unexport_gpio(dev->xfer_pin);
+
 	free(dev);
 	return 0;
 }
@@ -59,7 +183,12 @@ void freesky_set_callback(freesky_device *dev, freesky_callback callback) {
 	dev->callback = callback;
 }
 
-void freesky_process_events(freesky_device *dev) {
-	UNUSED(dev);
-	// noop for now
+int freesky_process_events(freesky_device *dev) {
+	int res = xfer_ready(dev);
+	if (res <= 0) {
+		return res;
+	}
+	// Okay, let's do a read!
+	do_xfer(dev);
+	return xfer_ready(dev);
 }

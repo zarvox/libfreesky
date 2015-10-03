@@ -58,8 +58,11 @@ void freesky_set_callback(freesky_device *dev, freesky_callback callback);
 // * Some way for the client to tell freesky to ask the device for data
 // * Some way for the 
 
-void freesky_process_events(freesky_device *dev);
-// C
+int freesky_process_events(freesky_device *dev);
+// Runs the event loop a single time.  Intended to be used with polling.
+//
+// Returns positive on success if more events remain to be processed,
+// 0 on success if all events are processed, and negative on error.
 
 
 #ifdef __cplusplus
