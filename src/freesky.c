@@ -88,20 +88,33 @@ static int xfer_ready(freesky_device* dev) {
 	return (buf == '0') ? 1 : 0;
 }
 
-static void do_xfer(freesky_device* dev) {
+static int do_xfer(freesky_device* dev) {
+	int retval = 0;
 	// 1. Assert transfer line low to preserve data buffers.
 	configure_gpio(dev->xfer_pin, GPIO_OUT, GPIO_LOW);
 	// 2. Do block read
 	__u8 buf[32];
-	int32_t len = i2c_smbus_read_block_data(dev->i2c_fd, 0x00, buf);
-	// 3. TODO: decode bytes and call appropriate callback
-	//    for now, log to the screen
-	for (int32_t i = 0 ; i < len ; i++ ) {
-		LOG("%02X ", buf[i]);
+	memset(buf, 0, 32);
+	int32_t len = i2c_smbus_read_i2c_block_data(dev->i2c_fd, 0x00, 32, buf);
+	if (len < 0) {
+		perror("i2c_smbus_read_block_data");
+		retval = -errno;
 	}
-	LOG("\n");
+	if (len > 0) {
+	// 3. TODO: decode bytes and call appropriate callback
+	//    for now, just log bytes to the screen
+		for (int32_t i = 0 ; i < len ; i++ ) {
+			LOG("%02X ", buf[i]);
+		}
+		LOG("\n");
+	}
 	// 4. Float transfer line high.
 	configure_gpio(dev->xfer_pin, GPIO_IN, GPIO_HIGH);
+	// Wait 200 usec.
+	// TODO: record the current time and block on the next process_events call if too soon instead?
+	// might require change in the process_events return value
+	usleep(200);
+	return retval;
 }
 
 // ---- Public API functions begin here. ----
@@ -125,6 +138,7 @@ int freesky_open(freesky_device **pdev, const char* i2c_device, freesky_gpio_pin
 	dev->xfer_fd = open(buf, O_RDONLY);
 	
 	// Reset the skywriter, by sending a 100msec pulse low on the reset pin
+	LOG("Resetting skywriter...");
 	configure_gpio(dev->reset_pin, GPIO_OUT, GPIO_LOW);
 	usleep(100000);
 	
@@ -132,17 +146,18 @@ int freesky_open(freesky_device **pdev, const char* i2c_device, freesky_gpio_pin
 	// give it 300, just to be generous.
 	configure_gpio(dev->reset_pin, GPIO_OUT, GPIO_HIGH);
 	usleep(300000);
+	LOG("done.\n");
 
 	// Open the i2c device.
 	dev->i2c_fd = open(i2c_device, O_RDWR);
 	if (dev->i2c_fd < 0) {
-		perror("couldn't open device");
+		perror("couldn't open i2c device");
 		return -errno;
 	}
 
 	// Set the slave address.
 	if (ioctl(dev->i2c_fd, I2C_SLAVE, SKYWRITER_ADDR) < 0) {
-		perror("couldn't set slave address");
+		perror("couldn't set i2c slave address");
 		return -errno;
 	}
 
@@ -184,11 +199,10 @@ void freesky_set_callback(freesky_device *dev, freesky_callback callback) {
 }
 
 int freesky_process_events(freesky_device *dev) {
+	// TODO: check if 200usec have passed since we last released xfer_pin, and if not, block
 	int res = xfer_ready(dev);
 	if (res <= 0) {
 		return res;
 	}
-	// Okay, let's do a read!
-	do_xfer(dev);
-	return xfer_ready(dev);
+	return do_xfer(dev);
 }

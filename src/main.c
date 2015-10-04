@@ -42,12 +42,10 @@ int main(int argc, char** argv) {
 	LOG("%d\n", *testref);
 	LOG("roundtripped userdata\n");
 	
-	usleep(2000000);
 	while(1) {
 		if (quit) break;
 		int res = freesky_process_events(dev);
 		if (res < 0) break;
-		if (res == 0) usleep(1000000);
 	}
 
 	freesky_close(dev);
