@@ -2,15 +2,28 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <signal.h>
 
 #define LOG(...) fprintf(stderr, __VA_ARGS__)
 #define DIE(...) do { LOG(__VA_ARGS__); exit(1); } while(0);
 #define UNUSED(x) (void)(x)
 
+int quit = 0;
+
+void handle_sigint(int sig) {
+	UNUSED(sig);
+	quit = 1;
+}
+
 int main(int argc, char** argv) {
 	// unused
 	UNUSED(argc);
 	UNUSED(argv);
+
+	// Set up signal handler, so we can ^C cleanly
+	struct sigaction sa;
+	sa.sa_handler = &handle_sigint;
+	sigaction(SIGINT, &sa, NULL);
 
 	int res;
 	freesky_device* dev = NULL;
@@ -31,6 +44,7 @@ int main(int argc, char** argv) {
 	
 	usleep(2000000);
 	while(1) {
+		if (quit) break;
 		int res = freesky_process_events(dev);
 		if (res < 0) break;
 		if (res == 0) usleep(1000000);
