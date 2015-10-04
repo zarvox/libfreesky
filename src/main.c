@@ -15,6 +15,13 @@ void handle_sigint(int sig) {
 	quit = 1;
 }
 
+void callback(freesky_device *dev, freesky_point point) {
+	// You can call freesky_get_userdata(dev) and upcast that to whatever type
+	// you passed in when you first called freesky_set_userdata().
+	UNUSED(dev);
+	LOG("x: %f\ty: %f\tz: %f\n", point.x, point.y, point.z);
+}
+
 int main(int argc, char** argv) {
 	// unused
 	UNUSED(argc);
@@ -37,6 +44,7 @@ int main(int argc, char** argv) {
 	LOG("opened skywriter\n");
 
 	freesky_set_userdata(dev, &test);
+	freesky_set_callback(dev, callback);
 
 	int* testref = (int*)freesky_get_userdata(dev);
 	LOG("%d\n", *testref);

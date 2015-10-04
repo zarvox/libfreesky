@@ -5,6 +5,12 @@
 extern "C" {
 #endif
 
+typedef struct {
+	// An X/Y/Z point.  Values will range from 0 to 1.
+	float x; // Left edge is 0, right edge is 1.
+	float y; // Bottom edge is 0, top edge is 1.
+	float z; // Touching the sensor is 0, further away is 1.
+} freesky_point;
 
 typedef int freesky_gpio_pin;
 // A GPIO pin number as numbered by the linux kernel's GPIO subsystem.
@@ -43,7 +49,7 @@ void *freesky_get_userdata(freesky_device *dev);
 // a bunch of callback functions that can be set separately.  The latter seems
 // more type-safe.
 
-typedef void (*freesky_callback)(freesky_device *dev);
+typedef void (*freesky_callback)(freesky_device *dev, freesky_point point);
 // Typedef for various user callbacks.
 // TODO: figure out all the callbacks we want to support, and also pass the
 // callback the data in question?
@@ -59,7 +65,6 @@ int freesky_process_events(freesky_device *dev);
 // May block for up to 200usec when called repeatedly to allow for data lines to settle.
 //
 // Returns 0 on success, and negative on error.
-
 
 #ifdef __cplusplus
 }

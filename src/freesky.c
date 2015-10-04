@@ -4,6 +4,7 @@
 #include <stdio.h> // for fprintf(3)
 #include <stdlib.h> // for malloc(3), free(3)
 #include <string.h> // for memset(3)
+#include <stdint.h>
 
 // for open(2)
 #include <sys/types.h>
@@ -88,6 +89,36 @@ static int xfer_ready(freesky_device* dev) {
 	return (buf == '0') ? 1 : 0;
 }
 
+static void process_buf(freesky_device* dev, int length, __u8* buf) {
+	if (length != 32) return; // assumption
+	// length is the number of bytes allocated in buf
+	// caller guarantees length > 0
+	__u8 size = buf[0]; // length in bytes of actual data in buffer, including itself
+	if (size < 4) return; // this packet is so corrupted
+	__u8 flags = buf[1]; // flags
+	__u8 seq = buf[2]; // sequence number
+	__u8 id = buf[3]; // message id
+	UNUSED(flags);
+	UNUSED(seq);
+	switch (id) {
+		case 0x91: // Sensor_Data_Output
+			if (size == 26) {
+				// Points are x, y, z in little endian
+				freesky_point point;
+				uint16_t x = (uint16_t)(buf[20]) + ((uint16_t)(buf[21]) * 256);
+				uint16_t y = (uint16_t)(buf[22]) + ((uint16_t)(buf[23]) * 256);
+				uint16_t z = (uint16_t)(buf[24]) + ((uint16_t)(buf[25]) * 256);
+				point.x = ((float)x) / 65535.;
+				point.y = ((float)y) / 65535.;
+				point.z = ((float)z) / 65535.;
+				dev->callback(dev, point);
+			}
+			break;
+		default:
+			break;
+	}
+}
+
 static int do_xfer(freesky_device* dev) {
 	int retval = 0;
 	// 1. Assert transfer line low to preserve data buffers.
@@ -102,11 +133,12 @@ static int do_xfer(freesky_device* dev) {
 	}
 	if (len > 0) {
 	// 3. TODO: decode bytes and call appropriate callback
-	//    for now, just log bytes to the screen
-		for (int32_t i = 0 ; i < len ; i++ ) {
-			LOG("%02X ", buf[i]);
-		}
-		LOG("\n");
+		// debugging: log bytes to the screen
+		// for (int32_t i = 0 ; i < len ; i++ ) {
+		// 	LOG("%02X ", buf[i]);
+		// }
+		// LOG("\n");
+		process_buf(dev, 32, buf);
 	}
 	// 4. Float transfer line high.
 	configure_gpio(dev->xfer_pin, GPIO_IN, GPIO_HIGH);
