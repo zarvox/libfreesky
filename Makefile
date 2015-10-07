@@ -20,7 +20,7 @@ $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
 $(BUILD_DIR)/main: $(OBJS)
-	gcc -o $@ $^
+	gcc -o $@ $^ -lpthread
 
 clean:
 	rm -rf $(BUILD_DIR)
